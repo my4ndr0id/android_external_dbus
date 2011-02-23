@@ -63,6 +63,7 @@ struct DBusCounter
 
   DBusCounterNotifyFunction notify_function; /**< notify function */
   void *notify_data; /**< data for notify function */
+  dbus_bool_t notify_pending : 1; /**< TRUE if the guard value has been crossed */
 };
 
 /** @} */  /* end of resource limits internals docs */
@@ -95,6 +96,7 @@ _dbus_counter_new (void)
   counter->notify_unix_fd_guard_value = 0;
   counter->notify_function = NULL;
   counter->notify_data = NULL;
+  counter->notify_pending = FALSE;
   
   return counter;
 }
@@ -138,8 +140,9 @@ _dbus_counter_unref (DBusCounter *counter)
 /**
  * Adjusts the value of the size counter by the given
  * delta which may be positive or negative.
- * Calls the notify function from _dbus_counter_set_notify()
- * if that function has been specified.
+ *
+ * This function may be called with locks held. After calling it, when
+ * any relevant locks are no longer held you must call _dbus_counter_notify().
  *
  * @param counter the counter
  * @param delta value to add to the size counter's current value
@@ -162,14 +165,33 @@ _dbus_counter_adjust_size (DBusCounter *counter,
         counter->size_value >= counter->notify_size_guard_value) ||
        (old >= counter->notify_size_guard_value &&
         counter->size_value < counter->notify_size_guard_value)))
-    (* counter->notify_function) (counter, counter->notify_data);
+    counter->notify_pending = TRUE;
+}
+
+/**
+ * Calls the notify function from _dbus_counter_set_notify(),
+ * if that function has been specified and the counter has crossed the
+ * guard value (in either direction) since the last call to this function.
+ *
+ * This function must not be called with locks held, since it can call out
+ * to user code.
+ */
+void
+_dbus_counter_notify (DBusCounter *counter)
+{
+  if (counter->notify_pending)
+    {
+      counter->notify_pending = FALSE;
+      (* counter->notify_function) (counter, counter->notify_data);
+    }
 }
 
 /**
  * Adjusts the value of the unix fd counter by the given
  * delta which may be positive or negative.
- * Calls the notify function from _dbus_counter_set_notify()
- * if that function has been specified.
+ *
+ * This function may be called with locks held. After calling it, when
+ * any relevant locks are no longer held you must call _dbus_counter_notify().
  *
  * @param counter the counter
  * @param delta value to add to the unix fds counter's current value
@@ -192,7 +214,7 @@ _dbus_counter_adjust_unix_fd (DBusCounter *counter,
         counter->unix_fd_value >= counter->notify_unix_fd_guard_value) ||
        (old >= counter->notify_unix_fd_guard_value &&
         counter->unix_fd_value < counter->notify_unix_fd_guard_value)))
-    (* counter->notify_function) (counter, counter->notify_data);
+    counter->notify_pending = TRUE;
 }
 
 /**
@@ -241,6 +263,7 @@ _dbus_counter_set_notify (DBusCounter               *counter,
   counter->notify_unix_fd_guard_value = unix_fd_guard_value;
   counter->notify_function = function;
   counter->notify_data = user_data;
+  counter->notify_pending = FALSE;
 }
 
 /** @} */  /* end of resource limits exported API */
