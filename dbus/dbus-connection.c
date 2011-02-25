@@ -4735,6 +4735,8 @@ dbus_connection_dispatch (DBusConnection *connection)
 
       if (preallocated == NULL)
         {
+          /* It's OK that this is finalized, because it hasn't been seen by
+           * anything that could attach user callbacks */
           dbus_message_unref (reply);
           result = DBUS_HANDLER_RESULT_NEED_MEMORY;
           _dbus_verbose ("no memory for error send in dispatch\n");
